@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>South African EIA & Utility Mapping Portal</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+  <style>
+    body { margin: 0; display: flex; height: 100vh; font-family: sans-serif; }
+    #sidebar { width: 460px; padding: 20px; background: #1e1e2e; color: white; box-sizing: border-box; overflow-y: auto; }
+    #map { flex-grow: 1; height: 100%; }
+    .layer-category { margin-top: 15px; background: #252538; padding: 12px; border-radius: 6px; }
+    .layer-category h4 { margin: 0 0 10px 0; color: #38bdf8; font-size: 14px; border-bottom: 1px solid #334155; padding-bottom: 5px; }
+    label { display: block; margin-bottom: 8px; cursor: pointer; font-size: 13px; color: #cbd5e1; }
+    input[type="text"], input[type="email"], input[type="file"], textarea { width: 100%; padding: 8px; margin-bottom: 8px; box-sizing: border-box; border-radius: 4px; border: 1px solid #444; background: #2a2a3c; color: white; font-family: sans-serif; font-size: 12px; }
+    button { width: 100%; padding: 10px; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 8px; }
+    button:hover { background: #1d4ed8; }
+    .status-box { margin-top: 10px; padding: 8px; background: #2a2a3c; border-radius: 4px; font-size: 12px; color: #a5b4fc; }
+    .toggle-log { margin-top: 10px; background: #11111b; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 11px; color: #34d399; max-height: 70px; overflow-y: auto; border: 1px solid #334155; }
+    .analysis-box { margin-top: 10px; background: #181825; padding: 12px; border-radius: 6px; border: 1px solid #45475a; font-size: 12px; line-height: 1.5; color: #cdd6f4; display: none; }
+    .analysis-box h5 { margin: 0 0 8px 0; color: #f9e2af; font-size: 13px; text-transform: uppercase; border-bottom: 1px solid #45475a; padding-bottom: 4px; }
+    
+    .scorecard-item { padding: 6px 8px; margin-bottom: 5px; border-radius: 4px; font-size: 11px; }
+    .score-pass { background: #064e3b; color: #6ee7b7; border-left: 4px solid #10b981; }
+    .score-warning { background: #78350f; color: #fde047; border-left: 4px solid #f59e0b; }
+    .score-action { background: #7f1d1d; color: #fca5a5; border-left: 4px solid #ef4444; }
+
+    .info.legend { background: rgba(255, 255, 255, 0.95); padding: 12px; border-radius: 6px; box-shadow: 0 0 15px rgba(0,0,0,0.3); font-size: 12px; line-height: 20px; color: #111827; min-width: 170px; }
+    .legend-item { display: flex; align-items: center; margin-bottom: 4px; transition: opacity 0.3s ease; }
+    .legend-color { width: 16px; height: 10px; display: inline-block; margin-right: 8px; border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+  <div id="sidebar">
+    <h2>SA Environmental GIS</h2>
+    <p style="font-size: 12px; color: #aaa;">Logged in as: {{ user_name }} | <a href="/logout" style="color: #f87171;">Sign Out</a></p>
+    
+    <div class="layer-category">
+      <h4>Project Info</h4>
+      <input type="text" id="projectName" placeholder="Project Name (e.g. Tzaneen Solar EIA)">
+      <input type="text" id="practitionerName" value="{{ user_name }}">
+    </div>
+
+    <div style="margin-top: 15px;">
+      <input type="text" id="aiPrompt" placeholder="e.g. Search Tzaneen and show river buffers">
+      <button onclick="processAiPrompt()">Search Location</button>
+    </div>
+
+    <div id="status" class="status-box">Status: Ready.</div>
+
+    <hr style="border-color: #444; margin: 15px 0;">
+
+    <div class="layer-category" style="border: 1px dashed #38bdf8;">
+      <h4>Import Custom Survey (.geojson)</h4>
+      <input type="file" id="utilityFile" accept=".geojson,.json" onchange="loadCustomUtilities(event)">
+    </div>
+
+    <h3 style="margin-top: 20px;">Map Layers</h3>
+
+    <div class="layer-category">
+      <h4>Base Maps & Historical</h4>
+      <label><input type="radio" name="basemap" value="street" checked onchange="switchBaseMap('street')"> Street View</label>
+      <label><input type="radio" name="basemap" value="satellite" onchange="switchBaseMap('satellite')"> Current Satellite View</label>
+      <label><input type="radio" name="basemap" value="historical" onchange="switchBaseMap('historical')"> Historical Baseline (2015 Imagery)</label>
+      <label><input type="radio" name="basemap" value="topo" onchange="switchBaseMap('topo')"> Terrain & Hill View</label>
+    </div>
+
+    <div class="layer-category">
+      <h4>Nature & Wildlife</h4>
+      <label><input type="checkbox" id="layerBuffer32m" checked onchange="toggleLayerWithLegend('nemaBuffer', 'River Protection Zone (32m)', '#16a34a', this.checked); loadNemaBuffers();"> River Protection Zone (32m)</label>
+      <label><input type="checkbox" id="layerCBA" onchange="toggleLayerWithLegend('cba', 'Protected Nature Areas', '#22c55e', this.checked); toggleMockLayer('CBA', '#22c55e', this.checked);"> Protected Nature Areas</label>
+      <label><input type="checkbox" id="layerSAPAD" onchange="toggleLayerWithLegend('sapad', 'National Parks & Reserves', '#059669', this.checked); toggleMockLayer('SAPAD', '#059669', this.checked);"> National Parks & Reserves</label>
+    </div>
+
+    <div class="layer-category">
+      <h4>Water & Rivers</h4>
+      <label><input type="checkbox" id="layerFloodlines" onchange="toggleLayerWithLegend('flood', '100-Year Flood Danger Lines', '#0284c7', this.checked); toggleMockLayer('Floodlines', '#0284c7', this.checked);"> 100-Year Flood Danger Lines</label>
+      <label><input type="checkbox" id="layerWetlands500m" onchange="toggleLayerWithLegend('wetland', 'Wetland Risk Zone (500m)', '#06b6d4', this.checked); toggleMockLayer('Wetlands', '#06b6d4', this.checked);"> Wetland Risk Zone (500m)</label>
+    </div>
+
+    <div class="layer-category">
+      <h4>Heritage & History</h4>
+      <label><input type="checkbox" id="layerHeritage" onchange="toggleLayerWithLegend('heritage', 'Historic Sites & Monuments', '#a855f7', this.checked); toggleMockLayer('Heritage', '#a855f7', this.checked);"> Historic Sites & Monuments</label>
+      <label><input type="checkbox" id="layerPalaeo" onchange="toggleLayerWithLegend('palaeo', 'Fossil Risk Zones', '#eab308', this.checked); toggleMockLayer('Palaeo', '#eab308', this.checked);"> Fossil Risk Zones</label>
+    </div>
+
+    <div class="layer-category">
+      <h4>Underground Utilities</h4>
+      <label><input type="checkbox" id="layerWaterMains" checked onchange="toggleLayerWithLegend('utilities', 'Underground Pipes & Cables', '#0055ff', this.checked); loadSpatialUtilities();"> Underground Pipes & Cables</label>
+    </div>
+
+    <div class="layer-category">
+      <h4>Instant Environmental Check</h4>
+      <button onclick="runComplianceMatrix()" style="background: #7c3aed;">Check Site Rules & Laws</button>
+      <div id="complianceScorecard" style="margin-top: 8px;"></div>
+    </div>
+
+    <div class="layer-category">
+      <h4>Specialist Study Trigger Engine</h4>
+      <button onclick="generateSpecialistChecklist()" style="background: #0284c7;">Generate Required Specialist Studies</button>
+      <div id="specialistResultBox" class="analysis-box"></div>
+    </div>
+
+    <div class="layer-category">
+      <h4>Slope & Erosion Risk Scanner</h4>
+      <button onclick="scanSlopeRisk()" style="background: #ea580c;">Check Land Steepness & Erosion</button>
+      <div id="slopeResultBox" class="analysis-box"></div>
+    </div>
+
+    <div class="layer-category">
+      <h4>Download Map Data</h4>
+      <button onclick="exportKmlPackage()" style="background: #0284c7;">Download Boundary File (.kml for Google Earth)</button>
+      <button onclick="exportGeoJsonPackage()" style="background: #0369a1; margin-top: 5px;">Download Boundary File (.geojson for Browsers/Editors)</button>
+      <button onclick="exportCsvMetrics()" style="background: #047857; margin-top: 5px;">Download Infrastructure Metrics (.csv Spreadsheet)</button>
+    </div>
+
+    <div class="layer-category">
+      <h4>Public Feedback & Comments</h4>
+      <input type="text" id="iaapName" placeholder="Your Full Name">
+      <input type="text" id="iaapOrg" placeholder="Company or Community Group">
+      <input type="email" id="iaapEmail" placeholder="Email Address">
+      <textarea id="iaapComment" placeholder="Write your environmental question or concern here..." rows="2"></textarea>
+      <button onclick="submitIaapEntry()" style="background: #475569;">Submit Public Comment</button>
+    </div>
+
+    <div class="layer-category">
+      <h4>Detailed Site Summary</h4>
+      <button onclick="analyzeSiteEnvironment()" style="background: #8b5cf6;">Read Environmental Profile</button>
+      <button onclick="downloadDraftReport()" style="background: #d97706; margin-top: 5px;">Download Written Report (.txt)</button>
+      <div id="analysisBox" class="analysis-box"></div>
+    </div>
+
+    <div class="layer-category">
+      <h4>Activity Log</h4>
+      <div id="toggleLog" class="toggle-log">System ready. Use drawing tools on the map to calculate site hectares.</div>
+    </div>
+
+    <hr style="border-color: #444; margin: 15px 0;">
+    <button onclick="exportPdfMap()" style="background: #059669;">Print / Export Official PDF Map</button>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+  <script>
+    const map = L.map('map').setView([-30.5595, 22.9375], 6);
+
+    const streetTiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+    const satTiles = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}');
+    const historicalTiles = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}');
+    const topoTiles = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17 });
+
+    let utilityLayer = L.layerGroup().addTo(map);
+    let nemaBufferLayer = L.layerGroup().addTo(map);
+    let searchOverlayLayer = L.layerGroup().addTo(map);
+    let mockLayers = {}; 
+    let activeLegendItems = {};
+    let lastSearchedLocation = "South Africa";
+    let lastFetchedAnalysis = null; 
+
+    let drawnItems = new L.FeatureGroup().addTo(map);
+    const drawControl = new L.Control.Draw({
+      edit: { featureGroup: drawnItems },
+      draw: {
+        polygon: { allowIntersection: false, showArea: true },
+        marker: false,
+        polyline: false,
+        circle: false,
+        rectangle: true,
+        circlemarker: false
+      }
+    });
+    map.addControl(drawControl);
+
+    map.on(L.Draw.Event.CREATED, function (e) {
+      const layer = e.layer;
+      drawnItems.clearLayers();
+      drawnItems.addLayer(layer);
+
+      let areaSqMeters = 0;
+      if (e.layerType === 'rectangle' || e.layerType === 'polygon') {
+        const latLngs = layer.getLatLngs()[0];
+        let area = 0;
+        const earthRadius = 6378137;
+        for (let i = 0; i < latLngs.length; i++) {
+          const p1 = latLngs[i];
+          const p2 = latLngs[(i + 1) % latLngs.length];
+          area += (p2.lng - p1.lng) * (Math.sin(p1.lat * Math.PI / 180) + Math.sin(p2.lat * Math.PI / 180));
+        }
+        areaSqMeters = Math.abs(area * earthRadius * earthRadius / 2) * Math.PI / 180;
+      }
+
+      const hectares = (areaSqMeters / 10000).toFixed(2);
+      layer.bindPopup(`<b>Custom Drawn Site Boundary</b><br>Calculated Area: <b>${hectares} Hectares</b>`).openPopup();
+      handleLayerToggle(`Custom Site Boundary Drawn (${hectares} Ha)`, true);
+    });
+
+    const legendControl = L.control({position: 'bottomright'});
+    legendControl.onAdd = function (map) {
+      const div = L.DomUtil.create('div', 'info legend');
+      div.id = 'map-dynamic-legend';
+      div.innerHTML = `<strong>Map Legend</strong><hr style="margin:5px 0; border-color:#ccc;">`;
+      return div;
+    };
+    legendControl.addTo(map);
+
+    updateLegendUI('utilities', 'Underground Pipes & Cables', '#0055ff', true);
+    updateLegendUI('nemaBuffer', 'River Protection Zone (32m)', '#16a34a', true);
+
+    function updateLegendUI(key, label, colorHex, isVisible) {
+      const legendDiv = document.getElementById('map-dynamic-legend');
+      if (!legendDiv) return;
+
+      if (isVisible) {
+        activeLegendItems[key] = { label, color: colorHex };
+      } else {
+        delete activeLegendItems[key];
+      }
+
+      let html = `<strong>Map Legend</strong><hr style="margin:5px 0; border-color:#ccc;">`;
+      for (const itemKey in activeLegendItems) {
+        const item = activeLegendItems[itemKey];
+        html += `
+          <div class="legend-item" id="legend-item-${itemKey}">
+            <span class="legend-color" style="background:${item.color};"></span>
+            <span>${item.label}</span>
+          </div>`;
+      }
+      if (Object.keys(activeLegendItems).length === 0) {
+        html += `<div style="color:#777; font-style:italic; font-size:11px;">No active layers</div>`;
+      }
+      legendDiv.innerHTML = html;
+    }
+
+    function toggleLayerWithLegend(key, label, colorHex, isChecked) {
+      handleLayerToggle(label, isChecked);
+      updateLegendUI(key, label, colorHex, isChecked);
+    }
+
+    function handleLayerToggle(layerName, isChecked) {
+      const logDiv = document.getElementById('toggleLog');
+      const timestamp = new Date().toLocaleTimeString();
+      const statusText = isChecked ? "Turned ON" : "Turned OFF";
+      logDiv.innerHTML += `<br>[${timestamp}] ${layerName}: ${statusText}`;
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    function switchBaseMap(type) {
+      map.removeLayer(streetTiles);
+      map.removeLayer(satTiles);
+      map.removeLayer(historicalTiles);
+      map.removeLayer(topoTiles);
+      if (type === 'satellite') {
+        satTiles.addTo(map);
+        handleLayerToggle('Base Map: Current Satellite View', true);
+      } else if (type === 'historical') {
+        historicalTiles.addTo(map);
+        handleLayerToggle('Base Map: Historical Baseline (2015 Imagery)', true);
+      } else if (type === 'topo') {
+        topoTiles.addTo(map);
+        handleLayerToggle('Base Map: Terrain View', true);
+      } else {
+        streetTiles.addTo(map);
+        handleLayerToggle('Base Map: Street View', true);
+      }
+    }
+
+    function toggleMockLayer(layerKey, colorHex, isChecked) {
+      if (isChecked) {
+        const center = map.getCenter();
+        const rect = L.rectangle([
+          [center.lat - 0.015, center.lng - 0.015],
+          [center.lat + 0.015, center.lng + 0.015]
+        ], { color: colorHex, weight: 2, fillOpacity: 0.2 }).bindPopup(`<b>Zone Alert:</b> ${layerKey} active footprint.`);
+        rect.addTo(map);
+        mockLayers[layerKey] = rect;
+      } else {
+        if (mockLayers[layerKey]) {
+          map.removeLayer(mockLayers[layerKey]);
+          delete mockLayers[layerKey];
+        }
+      }
+    }
+
+    function loadSpatialUtilities() {
+      if (!document.getElementById('layerWaterMains').checked) {
+        utilityLayer.clearLayers();
+        return;
+      }
+      const bounds = map.getBounds();
+      const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(',');
+
+      fetch(`/api/get-spatial-utilities?bbox=${bbox}`)
+        .then(res => res.json())
+        .then(data => {
+          utilityLayer.clearLayers();
+          L.geoJSON(data, {
+            style: function(feature) {
+              const type = feature.properties && feature.properties.type ? feature.properties.type.toLowerCase() : '';
+              if (type.includes('water')) return { color: '#0055ff', weight: 4 };
+              return { color: '#dc2626', weight: 4, dashArray: '5, 5' };
+            },
+            onEachFeature: function(feature, layer) {
+              layer.bindPopup(`<b>Utility:</b> ${feature.properties.name}<br><b>Type:</b> ${feature.properties.type}`);
+            }
+          }).addTo(utilityLayer);
+        });
+    }
+
+    function loadNemaBuffers() {
+      if (!document.getElementById('layerBuffer32m').checked) {
+        nemaBufferLayer.clearLayers();
+        return;
+      }
+      const bounds = map.getBounds();
+      const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(',');
+
+      fetch(`/api/get-nema-buffers?bbox=${bbox}`)
+        .then(res => res.json())
+        .then(data => {
+          nemaBufferLayer.clearLayers();
+          L.geoJSON(data, {
+            style: {
+              color: '#16a34a',
+              weight: 2,
+              fillColor: '#22c55e',
+              fillOpacity: 0.3,
+              dashArray: '4, 4'
+            },
+            onEachFeature: function(feature, layer) {
+              layer.bindPopup(`<b>Regulatory Notice:</b> ${feature.properties.name}<br><b>Rule:</b> River Protection Zone (32m)`);
+            }
+          }).addTo(nemaBufferLayer);
+        });
+    }
+
+    map.on('moveend', () => {
+      loadSpatialUtilities();
+      loadNemaBuffers();
+    });
+
+    function loadCustomUtilities(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const geoJsonData = JSON.parse(e.target.result);
+          L.geoJSON(geoJsonData).addTo(utilityLayer);
+          map.fitBounds(L.geoJSON(geoJsonData).getBounds());
+          document.getElementById('status').innerText = "Status: Loaded " + file.name;
+          handleLayerToggle('Custom File: ' + file.name, true);
+        } catch (err) {
+          alert("Invalid GeoJSON format.");
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function processAiPrompt() {
+      const promptText = document.getElementById('aiPrompt').value;
+      if (!promptText) {
+        alert("Please enter a location or command.");
+        return;
+      }
+
+      document.getElementById('status').innerText = "Status: Searching map...";
+
+      fetch('/api/parse-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: promptText })
+      })
+      .then(res => res.json())
+      .then(data => {
+        lastSearchedLocation = data.location || promptText;
+        const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(lastSearchedLocation)}&countrycode=za&limit=1`;
+
+        return fetch(photonUrl)
+          .then(res => res.json())
+          .then(photonData => {
+            searchOverlayLayer.clearLayers();
+
+            if (photonData && photonData.features && photonData.features.length > 0) {
+              const feature = photonData.features[0];
+              const coords = feature.geometry.coordinates;
+              const props = feature.properties;
+              const latLng = [coords[1], coords[0]];
+
+              map.setView(latLng, 15);
+
+              L.circle(latLng, {
+                color: '#f59e0b',
+                fillColor: '#f59e0b',
+                fillOpacity: 0.2,
+                radius: 300
+              }).addTo(searchOverlayLayer).bindPopup(`<b>Target Site:</b> ${props.name || lastSearchedLocation}`).openPopup();
+
+              L.marker(latLng).addTo(searchOverlayLayer);
+              updateLegendUI('searchTarget', 'Site Boundary / Target', '#f59e0b', true);
+
+              document.getElementById('status').innerText = `Status: Focused on ${props.name || lastSearchedLocation}`;
+              loadSpatialUtilities();
+              loadNemaBuffers();
+            } else {
+              alert("Location not found.");
+            }
+          });
+      })
+      .catch(err => alert("Error processing request."));
+    }
+
+    function runComplianceMatrix() {
+      const bounds = map.getBounds();
+      const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(',');
+      const scorecardDiv = document.getElementById('complianceScorecard');
+
+      scorecardDiv.innerHTML = "<div style='font-size:11px; color:#aaa;'>Checking environmental rules...</div>";
+
+      fetch(`/api/compliance-matrix?bbox=${bbox}`)
+        .then(res => res.json())
+        .then(data => {
+          if(data.scorecard && data.scorecard.length > 0) {
+            let html = "";
+            data.scorecard.forEach(item => {
+              let cssClass = "score-pass";
+              if (item.status === 'WARNING') cssClass = "score-warning";
+              if (item.status === 'ACTION REQUIRED') cssClass = "score-action";
+
+              html += `
+                <div class="scorecard-item ${cssClass}">
+                  <strong>${item.category}: [${item.status}]</strong><br>
+                  ${item.details}
+                </div>`;
+            });
+            scorecardDiv.innerHTML = html;
+          } else {
+            scorecardDiv.innerHTML = "<div style='font-size:11px; color:#aaa;'>No environmental rule conflicts found.</div>";
+          }
+        })
+        .catch(err => {
+          scorecardDiv.innerHTML = "<div style='font-size:11px; color:#f87171;'>Error running environmental check.</div>";
+        });
+    }
+
+    function generateSpecialistChecklist() {
+      const box = document.getElementById('specialistResultBox');
+      box.style.display = 'block';
+      box.innerHTML = `
+        <h5>Mandatory NEMA Specialist Studies</h5>
+        <strong>Target Area:</strong> ${lastSearchedLocation}<br><br>
+        <strong>1. Terrestrial Biodiversity Impact Assessment:</strong> <span style="color:#fde047;">REQUIRED</span> (Triggered by regional vegetation sensitivity and CBA overlap).<br><br>
+        <strong>2. Aquatic / Freshwater Impact Assessment:</strong> <span style="color:#6ee7b7;">REQUIRED</span> (Triggered by proximity to 32m river protection zones and wetland buffers).<br><br>
+        <strong>3. Heritage Impact Assessment (HIA):</strong> <span style="color:#fde047;">RECOMMENDED</span> (Required by SAHRA for greenfield disturbances exceeding 500m²).<br><br>
+        <strong>4. Geotechnical & Soil Erosion Study:</strong> <span style="color:#6ee7b7;">STANDARD</span> (Mandatory for terracing and subsurface utility clearances).
+      `;
+    }
+
+    function scanSlopeRisk() {
+      const box = document.getElementById('slopeResultBox');
+      box.style.display = 'block';
+      box.innerHTML = `
+        <h5>Slope & Land Assessment</h5>
+        <strong>Target Area:</strong> ${lastSearchedLocation}<br>
+        <strong>Terrain Rating:</strong> Gentle to Moderate Gradient (0% - 8% slope).<br>
+        <strong>Erosion Danger:</strong> Low to Moderate.<br>
+        <strong>Recommendation:</strong> Standard stormwater drainage controls are recommended during earthworks.
+      `;
+    }
+
+    function exportKmlPackage() {
+      const bounds = map.getBounds();
+      const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(',');
+      const location = encodeURIComponent(lastSearchedLocation);
+      window.location.href = `/api/export-kml?location=${location}&bbox=${bbox}`;
+    }
+
+    function exportGeoJsonPackage() {
+      const bounds = map.getBounds();
+      const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(',');
+      const location = encodeURIComponent(lastSearchedLocation);
+      window.location.href = `/api/export-geojson?location=${location}&bbox=${bbox}`;
+    }
+
+    function exportCsvMetrics() {
+      const bounds = map.getBounds();
+      const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(',');
+      const location = encodeURIComponent(lastSearchedLocation);
+      window.location.href = `/api/export-csv-metrics?location=${location}&bbox=${bbox}`;
+    }
+
+    function submitIaapEntry() {
+      const party_name = document.getElementById('iaapName').value;
+      const organization = document.getElementById('iaapOrg').value;
+      const email = document.getElementById('iaapEmail').value;
+      const comment = document.getElementById('iaapComment').value;
+      const projectName = document.getElementById('projectName').value || "General Assessment";
+
+      if(!party_name || !comment) {
+        alert("Please enter your name and comment.");
+        return;
+      }
+
+      fetch('/api/iaap-register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_name: projectName, party_name, organization, email, comment })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if(data.status === 'success') {
+          alert("Your feedback has been saved successfully.");
+          document.getElementById('iaapName').value = '';
+          document.getElementById('iaapOrg').value = '';
+          document.getElementById('iaapEmail').value = '';
+          document.getElementById('iaapComment').value = '';
+        } else {
+          alert("Error saving your feedback.");
+        }
+      });
+    }
+
+    function analyzeSiteEnvironment() {
+      const box = document.getElementById('analysisBox');
+      const bounds = map.getBounds();
+      const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(',');
+
+      document.getElementById('status').innerText = "Status: Querying database...";
+
+      fetch(`/api/analyze-site?bbox=${bbox}&location=${encodeURIComponent(lastSearchedLocation)}`)
+        .then(res => res.json())
+        .then(analysis => {
+          lastFetchedAnalysis = analysis; 
+          box.style.display = 'block';
+          box.innerHTML = `
+            <h5>Database Site Summary</h5>
+            <strong>Target Location:</strong> ${analysis.location}<br><br>
+            <strong>1. Surface & Rivers:</strong><br>
+            ${analysis.surface_state}<br><br>
+            <strong>2. Underground Pipes & Lines:</strong><br>
+            ${analysis.underground_state}<br><br>
+            <strong>3. Summary Count:</strong> ${analysis.utilities_count} underground lines and ${analysis.buffers_count} river buffers found in this map view.
+          `;
+          document.getElementById('status').innerText = "Status: Analysis ready.";
+        })
+        .catch(err => {
+          box.style.display = 'block';
+          box.innerHTML = "Error fetching site summary.";
+        });
+    }
+
+    function downloadDraftReport() {
+      if (!lastFetchedAnalysis) {
+        alert("Please click 'Read Environmental Profile' first so the report has up-to-date map data.");
+        return;
+      }
+
+      const projectName = document.getElementById('projectName').value || "Site Assessment Project";
+      const practitioner = document.getElementById('practitionerName').value || "{{ user_name }}";
+      const center = map.getCenter();
+      const dateStr = new Date().toLocaleDateString();
+
+      const reportContent = `===========================================================
+ENVIRONMENTAL IMPACT ASSESSMENT (EIA) SITE REPORT
+===========================================================
+
+PROJECT DETAILS:
+-----------------
+Project Name        : ${projectName}
+Target Location     : ${lastFetchedAnalysis.location}
+Map Center          : Lat ${center.lat.toFixed(5)}, Lon ${center.lng.toFixed(5)}
+Officer             : ${practitioner}
+Date Created        : ${dateStr}
+
+1. OVERVIEW:
+------------
+This report summarizes environmental rules, river zones, and underground pipe
+locations for ${lastFetchedAnalysis.location}.
+
+2. SURFACE & RIVER PROTECTION ZONES:
+------------------------------------
+${lastFetchedAnalysis.surface_state}
+
+3. UNDERGROUND PIPES & CABLES:
+-----------------------------
+${lastFetchedAnalysis.underground_state}
+
+4. NEXT STEPS & PERMITS:
+------------------------
+[ ] Check if environmental clearance is needed before building.
+[ ] Water License needed if working within 32 meters of a river.
+[ ] Ground scan recommended before digging near underground cables or pipes.
+
+-----------------------------------------------------------
+Report Generated by SA Environmental GIS Portal
+Officer: ${practitioner}
+===========================================================`;
+
+      const blob = new Blob([reportContent], { type: 'text/plain' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `EIA_Report_${lastFetchedAnalysis.location.replace(/[^a-z0-9]/gi, '_')}.txt`;
+      link.click();
+    }
+
+    function exportPdfMap() {
+      const project = encodeURIComponent(document.getElementById('projectName').value || "EIA Assessment");
+      const practitioner = encodeURIComponent(document.getElementById('practitionerName').value || "Environmental Officer");
+      const location = encodeURIComponent(lastSearchedLocation);
+
+      document.getElementById('status').innerText = "Status: Creating PDF report...";
+      window.location.href = `/api/export-pdf?project=${project}&practitioner=${practitioner}&location=${location}`;
+      
+      setTimeout(() => {
+        document.getElementById('status').innerText = "Status: PDF downloaded.";
+      }, 1500);
+    }
+  </script>
+</body>
+</html>

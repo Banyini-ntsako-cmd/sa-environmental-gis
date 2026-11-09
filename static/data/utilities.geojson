@@ -1,0 +1,35 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "type": "water",
+        "name": "Tzaneen Municipal Water Main"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [30.1500, -23.8300],
+          [30.1550, -23.8320],
+          [30.1600, -23.8350]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "type": "electricity",
+        "name": "Underground Feeder Cable 11kV"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [30.1520, -23.8280],
+          [30.1570, -23.8300],
+          [30.1620, -23.8330]
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+Flask
+Flask-Cors
+Flask-Login
+Flask-Bcrypt
+PyJWT
+psycopg2-binary
+reportlab
+html2image
+google-genai
+gunicorn
